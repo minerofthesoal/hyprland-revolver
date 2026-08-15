@@ -18,12 +18,12 @@ gets launched.
 ### From the AUR
 
 ```sh
-yay -S revolver-widget-git
-revolver-widget-install
+yay -S hyprland-revolver-git
+hyprland-revolver-install
 ```
 
 `pacman` drops the widget source and installer under
-`/usr/share/revolver-widget/` and puts `revolver-widget-install` on your
+`/usr/share/hyprland-revolver/` and puts `hyprland-revolver-install` on your
 `$PATH`. Run that as your normal user (not root) — it's the same
 `install.sh` below, just installed system-wide. It still only ever touches
 files under `$HOME`; the package itself doesn't and can't do that install
@@ -33,8 +33,8 @@ config, after `pacman` is done.
 ### From source
 
 ```sh
-git clone https://github.com/minerofthesoal/revolver-widget.git
-cd revolver-widget
+git clone https://github.com/minerofthesoal/hyprland-revolver.git
+cd hyprland-revolver
 ./install.sh
 ```
 
@@ -62,8 +62,8 @@ stops on one of the 8 uniformly at random — the bias only decides what's
   ii's own `Appearance.colors` tokens, dial shape from `MaterialCookie`)
 - `install.sh` — installs the scanner, wires the widget into
   `Background.qml`'s `WidgetCanvas`
-- `PKGBUILD` — builds the `revolver-widget-git` AUR package (ships this repo
-  under `/usr/share/revolver-widget` plus a `revolver-widget-install`
+- `PKGBUILD` — builds the `hyprland-revolver-git` AUR package (ships this repo
+  under `/usr/share/hyprland-revolver` plus a `hyprland-revolver-install`
   wrapper on `$PATH`; see "Publishing" below)
 
 ## Customizing
@@ -119,22 +119,22 @@ top of the file.
 ## Publishing (maintainer notes)
 
 This repo doubles as the AUR source — the `PKGBUILD` at the repo root builds
-a `-git` package (`revolver-widget-git`) that clones this repo, so there's
+a `-git` package (`hyprland-revolver-git`) that clones this repo, so there's
 nothing extra to keep in sync beyond bumping it after real changes.
 
 ### 1. Push this repo to GitHub
 
 ```sh
-cd revolver-widget
+cd hyprland-revolver
 git init -b main            # skip if already a repo
 git add .
 git commit -m "Initial commit"
-git remote add origin git@github.com:minerofthesoal/revolver-widget.git
+git remote add origin git@github.com:minerofthesoal/hyprland-revolver.git
 git push -u origin main
 ```
 
-Create the (empty) `revolver-widget` repo under your GitHub account first
-(web UI, or `gh repo create minerofthesoal/revolver-widget --public`) if it
+Create the (empty) `hyprland-revolver` repo under your GitHub account first
+(web UI, or `gh repo create minerofthesoal/hyprland-revolver --public`) if it
 doesn't exist yet.
 
 ### 2. Sanity-check the PKGBUILD locally
@@ -146,7 +146,7 @@ makepkg -si          # builds + installs, asks for sudo to pacman -U at the end
 ```
 
 If it builds cleanly, `pkgver()` correctly reports something like
-`r1.abcdef0`, and `revolver-widget-install` ends up on your `$PATH` and
+`r1.abcdef0`, and `hyprland-revolver-install` ends up on your `$PATH` and
 runs, you're ready to publish.
 
 ### 3. Set up AUR access (first time only)
@@ -167,19 +167,19 @@ The AUR repo is separate from the GitHub repo — it only ever holds
 GitHub via the `source=()` line at build time.
 
 ```sh
-git clone ssh://aur@aur.archlinux.org/revolver-widget-git.git aur-revolver-widget-git
-cp PKGBUILD aur-revolver-widget-git/
-cd aur-revolver-widget-git
+git clone ssh://aur@aur.archlinux.org/hyprland-revolver-git.git aur-hyprland-revolver-git
+cp PKGBUILD aur-hyprland-revolver-git/
+cd aur-hyprland-revolver-git
 makepkg --printsrcinfo > .SRCINFO
 git add PKGBUILD .SRCINFO
-git commit -m "Initial import: revolver-widget-git"
+git commit -m "Initial import: hyprland-revolver-git"
 git push
 ```
 
 That first push creates the AUR package (the empty-clone-then-push
 pattern is normal — AUR provisions the repo on first push, no separate
 "create package" step exists). It'll show up at
-`https://aur.archlinux.org/packages/revolver-widget-git` shortly after.
+`https://aur.archlinux.org/packages/hyprland-revolver-git` shortly after.
 
 ### 5. Ship a later update
 
@@ -188,7 +188,7 @@ pattern is normal — AUR provisions the repo on first push, no separate
 git add -A && git commit -m "..." && git push
 
 # in the AUR repo checkout
-cp ../revolver-widget/PKGBUILD .   # only if PKGBUILD itself changed
+cp ../hyprland-revolver/PKGBUILD .   # only if PKGBUILD itself changed
 makepkg --printsrcinfo > .SRCINFO
 git add -A && git commit -m "Update"
 git push

@@ -1,11 +1,11 @@
 # Maintainer: minerofthesoal <your-email@example.com>
-pkgname=revolver-widget-git
-_pkgname=revolver-widget
+pkgname=hyprland-revolver-git
+_pkgname=hyprland-revolver
 pkgver=r1.0000000
 pkgrel=1
 pkgdesc="Spinnable 8-chamber revolver desktop widget for illogical-impulse/Quickshell, loaded from your Steam library"
 arch=('any')
-url="https://github.com/minerofthesoal/revolver-widget"
+url="https://github.com/minerofthesoal/hyprland-revolver"
 license=('MIT')
 depends=('python' 'bash')
 optdepends=(
@@ -39,11 +39,11 @@ package() {
     install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$_pkgname/LICENSE"
 
-    # Thin wrapper so `revolver-widget-install` is on $PATH after pacman -S;
+    # Thin wrapper so `hyprland-revolver-install` is on $PATH after pacman -S;
     # it just execs the real installer, which resolves bin/ and qml/
     # relative to its own path via BASH_SOURCE.
-    install -Dm755 /dev/stdin "$pkgdir/usr/bin/revolver-widget-install" <<'WRAPPER'
+    install -Dm755 /dev/stdin "$pkgdir/usr/bin/hyprland-revolver-install" <<'WRAPPER'
 #!/usr/bin/env bash
-exec "/usr/share/revolver-widget/install.sh" "$@"
+exec "/usr/share/hyprland-revolver/install.sh" "$@"
 WRAPPER
 }
