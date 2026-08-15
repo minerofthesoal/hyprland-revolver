@@ -65,6 +65,8 @@ stops on one of the 8 uniformly at random — the bias only decides what's
 - `PKGBUILD` — builds the `hyprland-revolver-git` AUR package (ships this repo
   under `/usr/share/hyprland-revolver` plus a `hyprland-revolver-install`
   wrapper on `$PATH`; see "Publishing" below)
+- `publish-aur.sh` — pushes the current `PKGBUILD` to the AUR; see
+  "Publishing" below
 
 ## Customizing
 
@@ -162,9 +164,23 @@ runs, you're ready to publish.
 
 ### 4. Publish the AUR package
 
-The AUR repo is separate from the GitHub repo — it only ever holds
-`PKGBUILD` and `.SRCINFO`, and pacman/makepkg pull the real source from
-GitHub via the `source=()` line at build time.
+Run this from the repo root, on an Arch machine, with the SSH key from
+step 3 active:
+
+```sh
+./publish-aur.sh
+```
+
+It clones `ssh://aur@aur.archlinux.org/hyprland-revolver-git.git` (an
+empty clone is normal and expected the very first time — AUR provisions
+the real package on the *push*, not the clone), copies in the current
+`PKGBUILD`, generates a fresh `.SRCINFO` via `makepkg`, commits, and
+pushes. It's a no-op if nothing changed since the last run, so it's safe
+to re-run any time you touch the `PKGBUILD`.
+
+It needs your AUR SSH identity to do the actual push, which is exactly
+why this has to run on your machine and not anywhere else. If it fails
+partway through, here's the same thing by hand:
 
 ```sh
 git clone ssh://aur@aur.archlinux.org/hyprland-revolver-git.git aur-hyprland-revolver-git
@@ -176,22 +192,15 @@ git commit -m "Initial import: hyprland-revolver-git"
 git push
 ```
 
-That first push creates the AUR package (the empty-clone-then-push
-pattern is normal — AUR provisions the repo on first push, no separate
-"create package" step exists). It'll show up at
-`https://aur.archlinux.org/packages/hyprland-revolver-git` shortly after.
+Either way, it'll show up at
+`https://aur.archlinux.org/packages/hyprland-revolver-git` shortly after
+the push.
 
 ### 5. Ship a later update
 
 ```sh
-# in the GitHub repo
-git add -A && git commit -m "..." && git push
-
-# in the AUR repo checkout
-cp ../hyprland-revolver/PKGBUILD .   # only if PKGBUILD itself changed
-makepkg --printsrcinfo > .SRCINFO
-git add -A && git commit -m "Update"
-git push
+git add -A && git commit -m "..." && git push   # push the GitHub repo as usual
+./publish-aur.sh                                 # re-run only if PKGBUILD itself changed
 ```
 
 Since `pkgver()` derives from `git rev-list`/`git rev-parse` against the
