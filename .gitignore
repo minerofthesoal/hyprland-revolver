@@ -1,0 +1,16 @@
+# makepkg build artifacts
+pkg/
+src/
+*.pkg.tar.*
+*.log
+
+# backups left behind by install.sh if you test it locally
+*.bak
+
+# editor/OS cruft
+.DS_Store
+*.swp
+-e 
+# python bytecode
+__pycache__/
+*.pyc
