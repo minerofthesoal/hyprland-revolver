@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""revolver-configure - interactive terminal menu for everything the
+Settings panel's Source/Mode selectors can't do inline: picking specific
+games/instances by hand instead of scanning the whole library.
+
+Also duplicates the Source/Steam-mode/manual-on-off toggles here so this
+works standalone (no Quickshell/ii Settings panel needed at all, e.g.
+while testing from a git checkout). Every change is written immediately
+to ii's config.json - the same file the widget and Settings panel read -
+so there's nothing separate to "sync"; Quickshell picks it up live.
+
+Installed by install.sh, which rewrites __LIB_DIR__ below to point at
+wherever it copied revolver_lib/ - don't edit that placeholder by hand.
+"""
+import sys
+
+sys.path.insert(0, "__LIB_DIR__")
+
+from revolver_lib import common, multimc, prismlauncher, steam  # noqa: E402
+
+SOURCE_OPTIONS = [("steam", "Steam"), ("prismlauncher", "PrismLauncher"), ("multimc", "MultiMC")]
+MODE_OPTIONS = [
+    ("recent", "Recent - weighted toward what you've played lately"),
+    ("random", "Random - uniform chance across everything installed"),
+    ("recommended", "Recommended - recency + playtime + achievement curve"),
+]
+SOURCE_LABELS = dict(SOURCE_OPTIONS)
+MODE_LABELS = dict(MODE_OPTIONS)
+
+SCAN_FUNCS = {
+    "steam": lambda cfg: steam.scan(mode=cfg["steamMode"]),
+    "prismlauncher": lambda cfg: prismlauncher.scan(),
+    "multimc": lambda cfg: multimc.scan(),
+}
+
+
+def prompt_choice(title, options, current=None):
+    print()
+    print(title)
+    for i, (value, label) in enumerate(options, 1):
+        marker = "  <- current" if value == current else ""
+        print("  %d. %s%s" % (i, label, marker))
+    while True:
+        raw = input("> ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return options[int(raw) - 1][0]
+        print("Enter a number from the list.")
+
+
+def scan_current_pool(cfg):
+    fn = SCAN_FUNCS.get(cfg["source"])
+    return fn(cfg) if fn else []
+
+
+def edit_manual_selection(cfg):
+    print()
+    print("Scanning %s..." % SOURCE_LABELS.get(cfg["source"], cfg["source"]))
+    pool = scan_current_pool(cfg)
+    if not pool:
+        print("Nothing found for this source - check it's installed and you have")
+        print("at least one game/instance, then try again.")
+        return cfg
+
+    selected = set(cfg.get("manualSelection", []))
+    while True:
+        print()
+        print("Manual selection (%s) - enter a number to toggle, 'a' for all," % SOURCE_LABELS.get(cfg["source"], cfg["source"]))
+        print("'n' for none, 'd' when done:")
+        for i, g in enumerate(pool, 1):
+            mark = "[x]" if g["id"] in selected else "[ ]"
+            print("  %3d. %s %s" % (i, mark, g["name"]))
+        raw = input("> ").strip().lower()
+        if raw == "d":
+            break
+        elif raw == "a":
+            selected = {g["id"] for g in pool}
+        elif raw == "n":
+            selected = set()
+        elif raw.isdigit() and 1 <= int(raw) <= len(pool):
+            gid = pool[int(raw) - 1]["id"]
+            if gid in selected:
+                selected.discard(gid)
+            else:
+                selected.add(gid)
+        else:
+            print("Enter a number to toggle, 'a', 'n', or 'd'.")
+
+    cfg["manualSelection"] = sorted(selected)
+    common.save_revolver_config({"manualSelection": cfg["manualSelection"]})
+    print("Saved - %d selected." % len(selected))
+    return cfg
+
+
+def print_status(cfg):
+    print()
+    print("Current settings:")
+    print("  Source:            %s" % SOURCE_LABELS.get(cfg["source"], cfg["source"]))
+    if cfg["source"] == "steam":
+        print("  Steam mode:        %s" % MODE_LABELS.get(cfg["steamMode"], cfg["steamMode"]))
+    else:
+        print("  Steam mode:        (not used - only applies when source is Steam)")
+    if cfg["manualSelectionOnly"]:
+        print("  Manual selection:  ON, %d picked" % len(cfg["manualSelection"]))
+    else:
+        print("  Manual selection:  off (scans the whole library/instance list)")
+
+
+def main():
+    cfg = common.load_revolver_config()
+    print("== Revolver Barrel configuration ==")
+    print("Config file: %s" % common.ii_config_path())
+
+    while True:
+        print_status(cfg)
+        print()
+        print("1. Change source")
+        print("2. Change Steam mode")
+        print("3. Toggle manual selection on/off")
+        print("4. Edit manual selection")
+        print("5. Quit")
+        raw = input("> ").strip()
+
+        if raw == "1":
+            value = prompt_choice("Source:", SOURCE_OPTIONS, cfg["source"])
+            cfg["source"] = value
+            common.save_revolver_config({"source": value})
+            print("Source set to %s." % SOURCE_LABELS[value])
+        elif raw == "2":
+            value = prompt_choice("Steam mode:", MODE_OPTIONS, cfg["steamMode"])
+            cfg["steamMode"] = value
+            common.save_revolver_config({"steamMode": value})
+            print("Steam mode set to: %s" % MODE_LABELS[value])
+        elif raw == "3":
+            cfg["manualSelectionOnly"] = not cfg["manualSelectionOnly"]
+            common.save_revolver_config({"manualSelectionOnly": cfg["manualSelectionOnly"]})
+            print("Manual selection is now %s." % ("ON" if cfg["manualSelectionOnly"] else "OFF"))
+        elif raw == "4":
+            cfg = edit_manual_selection(cfg)
+        elif raw == "5":
+            break
+        else:
+            print("Enter a number from the menu.")
+
+    print()
+    print("Done. Quickshell watches config.json and picks up changes live -")
+    print("no restart needed. If the widget doesn't seem to update, reload it:")
+    print("  pkill -f 'qs -c ii' && qs -c ii")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        sys.exit(0)

@@ -8,15 +8,20 @@
 // mechanism the clock uses - rather than its own window.
 //
 // Drag the drum to spin it (disabled while the screen is locked - a
-// diagonal metal safety bar covers it instead). It's loaded with 8
-// chambers sampled (weighted toward recently-played) from your installed
-// Steam library. Landing plays an optional fire sequence (gun frame fades
-// in, a side clip loads and ejects, hammer cocks and strikes, the whole
-// widget kicks with recoil, a muzzle burst fires from the pin) before
-// launching - or launches instantly if that's toggled off in settings.
+// diagonal metal safety bar covers it instead). It's loaded with
+// chamberCount chambers sampled from whichever source/mode is picked in
+// Settings (Steam, PrismLauncher, or MultiMC; for Steam, weighted by
+// recent play, uniformly random, or a broader "recommended" curve — see
+// revolver_lib/ for the scoring). Landing plays an optional fire
+// sequence (gun frame fades in, a side clip loads and ejects, hammer
+// cocks and strikes, the widget kicks with recoil, a muzzle burst fires
+// from the pin) before launching - or launches instantly if that's
+// toggled off in settings. Whichever chamber fired then visibly ejects
+// its spent shell and loads a fresh one before the drum can be spun
+// again.
 //
 // Installed by install.sh — do not edit __SCRIPT_PATH__ by hand, that's
-// templated in at install time to point at revolver-scan-steam.
+// templated in at install time to point at revolver-scan.
 
 pragma ComponentBehavior: Bound
 
@@ -33,6 +38,12 @@ Item {
 
     property int chamberCount: 8
     property bool fireAnimationEnabled: true
+    // Both of these are only used here to know *when* to trigger a fresh
+    // scan - revolver-scan reads the actual source/mode itself out of
+    // ii's config.json, so the values passed in don't need to be
+    // forwarded to the script, just watched for changes.
+    property string source: "steam"
+    property string steamMode: "recent"
 
     implicitWidth: 230
     implicitHeight: 268
@@ -43,11 +54,29 @@ Item {
     property bool loading: false
     property bool firing: false
     property bool committedSpin: false   // false while chambers aren't ready yet
-    property var chambers: []            // [{appid, name, weight}, ...] length chamberCount
+    property var chambers: []            // [{id, name, weight, launch}, ...] length chamberCount
     property var lastPool: []            // full weighted pool from the last scan, for single-chamber reloads
     property var _pendingChosen: null    // stashed launch target while the fire sequence plays
     property int landedIndex: -1
+    property int ejectingIndex: -1       // which chamber (if any) is mid eject/reload animation
     property string statusText: "drag to spin"
+
+    // chamberCount changing at runtime (Settings panel) used to leave a
+    // stale-length `chambers` array behind forever, since committedSpin
+    // required chambers.length === chamberCount and nothing ever
+    // resynced them - meaning the drum could only ever fire again if you
+    // happened to land back on exactly 8. Resample immediately instead.
+    onChamberCountChanged: {
+        if (root.lastPool.length > 0) {
+            root.chambers = root._weightedPick(root.lastPool, root.chamberCount)
+        } else {
+            root._rescan()
+        }
+    }
+    // Source/mode changes swap out the whole pool's composition, so
+    // there's nothing worth salvaging from lastPool - full rescan.
+    onSourceChanged: root._rescan()
+    onSteamModeChanged: root._rescan()
 
     // Same Material You tokens CookieClock.qml pulls from.
     property color colBackground: Appearance.colors.colPrimaryContainer
@@ -191,7 +220,7 @@ Item {
     function _fireShot() {
         if (root._pendingChosen) {
             root._launchGame(root._pendingChosen)
-            root._replaceChamber(root.landedIndex)
+            root._startEject(root.landedIndex)
             root._pendingChosen = null
         }
     }
@@ -203,17 +232,29 @@ Item {
         if (launchProc.running) {
             launchProc.running = false
         }
-        launchProc.command = ["xdg-open", "steam://rungameid/" + chosen.appid]
+        // Every source (Steam, PrismLauncher, MultiMC) emits its own
+        // ready-to-run argv in "launch", so this stays source-agnostic.
+        // The steam:// fallback only matters for a pool entry produced
+        // before this field existed.
+        launchProc.command = chosen.launch || ["xdg-open", "steam://rungameid/" + chosen.id]
         launchProc.running = true
     }
 
-    // Eject the just-launched chamber and load a different game into it,
-    // like ejecting a spent shell. Prefers a game not already loaded in one
-    // of the other chambers.
+    // Kick off that chamber's eject/reload animation (see the Repeater
+    // delegate below) - it calls back into _replaceChamber once the
+    // spent shell has visually fallen clear, so the new game's name
+    // never appears mid-fall.
+    function _startEject(idx) {
+        root.ejectingIndex = idx
+    }
+
+    // Load a different entry into chamber `idx`, like loading a fresh
+    // round after ejecting a spent shell. Prefers a game/instance not
+    // already loaded in one of the other chambers.
     function _replaceChamber(idx) {
         if (root.lastPool.length === 0) return
-        var loadedIds = root.chambers.map(function(c) { return c.appid })
-        var candidates = root.lastPool.filter(function(g) { return loadedIds.indexOf(g.appid) === -1 })
+        var loadedIds = root.chambers.map(function(c) { return c.id })
+        var candidates = root.lastPool.filter(function(g) { return loadedIds.indexOf(g.id) === -1 })
         if (candidates.length === 0) candidates = root.lastPool.slice()
         var picked = root._weightedPick(candidates, 1)[0]
         var updated = root.chambers.slice()
@@ -296,6 +337,7 @@ Item {
                 Repeater {
                     model: root.chamberCount
                     delegate: Item {
+                        id: chamberSlot
                         required property int index
                         property real angle: index * (360 / root.chamberCount) * Math.PI / 180
                         x: drum.width / 2 + Math.cos(angle) * 82 - 24
@@ -305,25 +347,100 @@ Item {
                         // counter-rotate the label so text stays upright as the drum spins
                         rotation: -drum.rotation
 
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: width / 2
-                            color: (root.landedIndex === index && !root.spinning && root.committedSpin) ? root.colAccent : root.colChamber
-                            opacity: (root.landedIndex === index && !root.spinning && root.committedSpin) ? 0.92 : 0.5
+                        property bool isLive: root.landedIndex === chamberSlot.index && !root.spinning && root.committedSpin
+                        property bool isEjecting: root.ejectingIndex === chamberSlot.index
 
-                            Text {
+                        // Rising edge only - the SequentialAnimation below
+                        // runs to completion on its own once started, so
+                        // this doesn't need to (and shouldn't) retrigger
+                        // just because isEjecting later goes false again.
+                        onIsEjectingChanged: if (chamberSlot.isEjecting) ejectReload.start()
+
+                        // Everything that physically moves during an eject/
+                        // reload lives in here, kept separate from
+                        // chamberSlot's own x/y/rotation (those stay locked
+                        // to this chamber's fixed position on the drum).
+                        Item {
+                            id: shell
+                            anchors.fill: parent
+                            property real fallY: 0
+                            property real wobble: 0
+                            transform: [
+                                Rotation { angle: shell.wobble; origin.x: shell.width / 2; origin.y: shell.height / 2 },
+                                Translate { y: shell.fallY }
+                            ]
+
+                            // brass rim peeking out from behind the casing face
+                            Rectangle {
                                 anchors.fill: parent
-                                anchors.margins: 4
-                                text: root.chambers.length > index ? root.chambers[index].name : "—"
-                                color: root.colOnBackground
-                                font.pixelSize: (root.landedIndex === index && !root.spinning && root.committedSpin) ? 9 : 8
-                                font.bold: root.landedIndex === index && !root.spinning && root.committedSpin
-                                wrapMode: Text.WordWrap
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideRight
-                                maximumLineCount: 4
+                                radius: width / 2
+                                color: chamberSlot.isLive ? root.colAccent : Qt.lighter(root.colChamber, 1.4)
+                                opacity: chamberSlot.isLive ? 0.55 : 0.35
                             }
+
+                            // casing face
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 2
+                                radius: width / 2
+                                color: chamberSlot.isLive ? root.colAccent : root.colChamber
+                                opacity: chamberSlot.isLive ? 0.92 : 0.5
+                                border.width: 1
+                                border.color: Qt.darker(chamberSlot.isLive ? root.colAccent : root.colChamber, 1.3)
+
+                                Text {
+                                    anchors.fill: parent
+                                    anchors.margins: 4
+                                    text: root.chambers.length > chamberSlot.index ? root.chambers[chamberSlot.index].name : "—"
+                                    color: root.colOnBackground
+                                    font.pixelSize: chamberSlot.isLive ? 9 : 8
+                                    font.bold: chamberSlot.isLive
+                                    wrapMode: Text.WordWrap
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    elide: Text.ElideRight
+                                    maximumLineCount: 4
+                                }
+                            }
+
+                            // primer cap - a small inset dot near the rim,
+                            // the way a cartridge's primer sits at the base
+                            // of the case. Brightens on the live chamber.
+                            Rectangle {
+                                width: 7
+                                height: 7
+                                radius: 3.5
+                                anchors.top: parent.top
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.topMargin: 3
+                                color: chamberSlot.isLive ? root.colOnBackground : Qt.darker(root.colChamber, 1.2)
+                                opacity: chamberSlot.isLive ? 0.9 : 0.55
+                                border.width: 1
+                                border.color: root.colBackground
+                            }
+                        }
+
+                        // Spent shell drops clear (falling + tumbling +
+                        // fading), the next round loads into the pool
+                        // while it's off-screen, then drops back in from
+                        // above and settles with a little bounce.
+                        SequentialAnimation {
+                            id: ejectReload
+                            ParallelAnimation {
+                                NumberAnimation { target: shell; property: "fallY"; to: 46; duration: 240; easing.type: Easing.InQuad }
+                                NumberAnimation { target: shell; property: "wobble"; to: (chamberSlot.index % 2 === 0 ? 1 : -1) * 50; duration: 240; easing.type: Easing.InQuad }
+                                NumberAnimation { target: shell; property: "opacity"; to: 0; duration: 220 }
+                            }
+                            ScriptAction { script: root._replaceChamber(chamberSlot.index) }
+                            PropertyAction { target: shell; property: "fallY"; value: -46 }
+                            PropertyAction { target: shell; property: "wobble"; value: 0 }
+                            PropertyAction { target: shell; property: "opacity"; value: 0 }
+                            PauseAnimation { duration: 60 }
+                            ParallelAnimation {
+                                NumberAnimation { target: shell; property: "fallY"; to: 0; duration: 260; easing.type: Easing.OutBack }
+                                NumberAnimation { target: shell; property: "opacity"; to: 1; duration: 200 }
+                            }
+                            ScriptAction { script: if (root.ejectingIndex === chamberSlot.index) root.ejectingIndex = -1 }
                         }
                     }
                 }

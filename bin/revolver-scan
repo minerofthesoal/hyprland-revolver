@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""revolver-scan - prints the JSON pool of {"id","name","weight","launch"}
+entries the RevolverBarrel widget chambers from.
+
+Reads which source (steam/prismlauncher/multimc) and, for Steam, which
+mode (recent/random/recommended) to use from ii's own config.json
+(background.widgets.revolver.*) - the same place the Settings panel's
+Source/Mode selectors and `revolver-configure` write to, so all three
+ways of changing it agree. --source/--mode/--top are there for
+standalone terminal use (debugging, or just checking your odds) and
+override the config file for that one run only.
+
+Installed by install.sh, which rewrites __LIB_DIR__ below to point at
+wherever it copied revolver_lib/ - don't edit that placeholder by hand.
+"""
+import argparse
+import json
+import sys
+
+sys.path.insert(0, "__LIB_DIR__")
+
+from revolver_lib import common, multimc, prismlauncher, steam  # noqa: E402
+
+SOURCES = {
+    "steam": lambda mode: steam.scan(mode=mode),
+    "prismlauncher": lambda mode: prismlauncher.scan(),
+    "multimc": lambda mode: multimc.scan(),
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Scan a game/instance source for the Revolver Barrel widget.")
+    parser.add_argument("--source", choices=sorted(SOURCES), default=None,
+                         help="override the configured source for this run")
+    parser.add_argument("--mode", choices=["recent", "random", "recommended"], default=None,
+                         help="override the configured Steam mode for this run (ignored for other sources)")
+    parser.add_argument("--top", type=int, default=None,
+                         help="print the top N entries by weight as a readable table instead of raw JSON")
+    args = parser.parse_args()
+
+    cfg = common.load_revolver_config()
+    source = args.source or cfg["source"]
+    mode = args.mode or cfg["steamMode"]
+
+    scan_fn = SOURCES.get(source)
+    if scan_fn is None:
+        pool = []
+    else:
+        pool = scan_fn(mode)
+
+    pool = common.apply_manual_selection(pool, cfg)
+
+    if args.top:
+        if not pool:
+            print("(no games/instances found for source=%s)" % source, file=sys.stderr)
+        for g in pool[:args.top]:
+            print("%6.2f  %s  (%s)" % (g["weight"], g["name"], g["id"]))
+        return
+
+    print(json.dumps(pool))
+
+
+if __name__ == "__main__":
+    main()
