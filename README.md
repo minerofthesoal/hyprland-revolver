@@ -22,16 +22,27 @@ loads a fresh one before you can spin again.
 
 ```sh
 yay -S hyprland-revolver-git
+```
+
+That's it - setup now happens **automatically the next time you log
+in**. `pacman`/AUR helpers can only ever stage files under `/usr` (they
+run as root and never touch your `$HOME`), so the package instead
+installs and enables a `systemd --user` unit
+(`hyprland-revolver-setup.service`) that runs the real installer as
+*you*, in *your* own session, right after login - no manual step needed
+for most people. It's quiet unless it actually changes something: a
+desktop notification when it sets up or updates something, nothing at
+all on logins where everything's already current.
+
+Don't want to wait for your next login (or your setup doesn't run a
+`systemd --user` session at all - some minimal/manual Hyprland configs
+don't)? Run it yourself right away:
+
+```sh
 hyprland-revolver-install
 ```
 
-`pacman` drops the widget source and installer under
-`/usr/share/hyprland-revolver/` and puts `hyprland-revolver-install` on
-your `$PATH`. **`pacman -S`/`yay -S` will print a message telling you to
-run that last command** - it can only ever stage files under `/usr`,
-since it runs as root and never touches your `$HOME`, so that one step
-genuinely can't be automated away. Run it as your normal user (not
-root); it's the same `install.sh` below, just installed system-wide.
+Either path runs the exact same `install.sh` below.
 
 ### From source
 
@@ -48,6 +59,36 @@ every file it touches (`Background.qml`, `Config.qml`,
 standalone-window version) before patching, and is safe to re-run -
 re-running after an update only patches in whatever's actually new and
 leaves the rest (including any hand edits) alone.
+
+## How the automatic setup works
+
+`hyprland-revolver-setup.service` is a `systemd --user` unit, enabled by
+default (symlinked into `default.target.wants/` at package-install
+time, no `systemctl --user enable` needed). It runs
+`install.sh --auto` once per login:
+
+- `--auto` suppresses the normal narrative output (nothing's watching a
+  terminal) but keeps every real error visible, so
+  `journalctl --user -u hyprland-revolver-setup` shows what actually
+  happened if something goes wrong.
+- It fires on `default.target`, not `graphical-session.target` -
+  deliberately, since not every Hyprland setup wires up session-target
+  integration, but a `systemd --user` instance reaching its
+  `default.target` on login is close to universal on an Arch/systemd
+  system. Running it outside a graphical session is harmless: it just
+  no-ops if there's no Quickshell config to patch yet.
+- It's safe to run every login (and does - each login is a fresh
+  `systemd --user` instance, so this isn't a "run once ever" unit) since
+  `install.sh` is fast and fully idempotent. It stays completely silent
+  when nothing changed, and only sends a desktop notification
+  (`notify-send`, if you have a notification daemon) when it actually
+  set something up or picked up a new field from an update - so it
+  never turns into a recurring "you're all set!" notification every
+  time you log in.
+- If your session genuinely never starts a `systemd --user` manager at
+  all (uncommon, but some minimal Hyprland configs skip it entirely),
+  none of this fires, and `hyprland-revolver-install` is the fallback -
+  same as before this existed.
 
 ## Choosing a source
 
@@ -159,10 +200,12 @@ back to the full library rather than showing nothing.
   `BackgroundConfig.qml` / `Background.qml`.
 - `PKGBUILD` / `hyprland-revolver-git.install` — build the
   `hyprland-revolver-git` AUR package; the `.install` file is what
-  prints the "now run `hyprland-revolver-install`" message after
-  `pacman -S`. See "Publishing" below.
-- `publish-aur.sh` — pushes the current `PKGBUILD`/`.install` to the
-  AUR; see "Publishing" below.
+  prints the post-install message. See "Publishing" below.
+- `hyprland-revolver-setup.service` — the `systemd --user` unit that
+  runs setup automatically on login (see "How the automatic setup works"
+  above).
+- `publish-aur.sh` — pushes the current `PKGBUILD`/`.install`/`.service`
+  to the AUR; see "Publishing" below.
 
 ## Customizing
 
@@ -276,9 +319,9 @@ makepkg -si          # builds + installs, asks for sudo to pacman -U at the end
 ```
 
 If it builds cleanly, `pkgver()` correctly reports something like
-`r1.abcdef0`, you see the post-install message telling you to run
-`hyprland-revolver-install`, and running that actually wires the widget
-in, you're ready to publish.
+`r1.abcdef0`, `systemctl --user status hyprland-revolver-setup` shows
+the unit enabled, and running `hyprland-revolver-install` by hand
+actually wires the widget in, you're ready to publish.
 
 ### 3. Set up AUR access (first time only)
 
@@ -305,10 +348,11 @@ step 3 active:
 It clones `ssh://aur@aur.archlinux.org/hyprland-revolver-git.git` (an
 empty clone is normal and expected the very first time — AUR provisions
 the real package on the *push*, not the clone), copies in the current
-`PKGBUILD` and `hyprland-revolver-git.install`, generates a fresh
-`.SRCINFO` via `makepkg`, commits, and pushes. It's a no-op if nothing
-changed since the last run, so it's safe to re-run any time you touch
-either file.
+`PKGBUILD`, `hyprland-revolver-git.install`, and
+`hyprland-revolver-setup.service`, generates a fresh `.SRCINFO` via
+`makepkg`, commits, and pushes. It's a no-op if nothing changed since
+the last run, so it's safe to re-run any time you touch any of those
+files.
 
 It needs your AUR SSH identity to do the actual push, which is exactly
 why this has to run on your machine and not anywhere else. If it fails
@@ -316,10 +360,10 @@ partway through, here's the same thing by hand:
 
 ```sh
 git clone ssh://aur@aur.archlinux.org/hyprland-revolver-git.git aur-hyprland-revolver-git
-cp PKGBUILD hyprland-revolver-git.install aur-hyprland-revolver-git/
+cp PKGBUILD hyprland-revolver-git.install hyprland-revolver-setup.service aur-hyprland-revolver-git/
 cd aur-hyprland-revolver-git
 makepkg --printsrcinfo > .SRCINFO
-git add PKGBUILD hyprland-revolver-git.install .SRCINFO
+git add PKGBUILD hyprland-revolver-git.install hyprland-revolver-setup.service .SRCINFO
 git commit -m "Initial import: hyprland-revolver-git"
 git push
 ```
@@ -332,7 +376,7 @@ the push.
 
 ```sh
 git add -A && git commit -m "..." && git push   # push the GitHub repo as usual
-./publish-aur.sh                                 # re-run only if PKGBUILD/.install changed
+./publish-aur.sh                                 # re-run only if PKGBUILD/.install/.service changed
 ```
 
 Since `pkgver()` derives from `git rev-list`/`git rev-parse` against the

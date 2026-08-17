@@ -2,7 +2,25 @@
 # Installs the Revolver Barrel widget into an illogical-impulse (Quickshell)
 # config: the widget itself, its Config.options schema entry, its Settings
 # panel toggle, and its FadeLoader-gated instantiation in Background.qml.
+#
+# --auto: used by the systemd --user unit this installs (see below) to run
+# unattended on login. Narrative "-> ..." lines are suppressed (nothing's
+# watching a terminal); real problems still print, since that output lands
+# in `journalctl --user -u hyprland-revolver-setup`. Ends with a single
+# notify-send if it actually changed anything, and stays fully silent if
+# everything was already up to date - so it's safe to run on every login
+# without becoming a recurring notification.
 set -euo pipefail
+
+QUIET=false
+for arg in "$@"; do
+    case "$arg" in
+        --auto|--quiet) QUIET=true ;;
+    esac
+done
+CHANGED=false
+HAD_ERROR=false
+log() { [ "$QUIET" = false ] && echo "$@" || true; }
 
 QS_DIR="${QUICKSHELL_CONFIG_DIR:-$HOME/.config/quickshell/ii}"
 MODULE_DIR="$QS_DIR/modules/revolverBarrel"
@@ -13,14 +31,24 @@ SHELL_FILE="$QS_DIR/shell.qml"
 CONFIG_QML="$QS_DIR/modules/common/Config.qml"
 SETTINGS_QML="$QS_DIR/modules/settings/BackgroundConfig.qml"
 
-echo "== Revolver Barrel installer =="
+log "== Revolver Barrel installer =="
 
 if [ ! -d "$QS_DIR" ]; then
+    if [ "$QUIET" = true ]; then
+        # Expected on every login for anyone who hasn't set up ii's
+        # Quickshell config yet (or uses a non-default location without
+        # QUICKSHELL_CONFIG_DIR set) - not this widget's problem, and not
+        # worth a notification every single session.
+        exit 0
+    fi
     echo "!! No quickshell config found at: $QS_DIR"
     echo "   export QUICKSHELL_CONFIG_DIR=/path/to/your/ii and re-run."
     exit 1
 fi
 if [ ! -f "$BG_FILE" ]; then
+    if [ "$QUIET" = true ]; then
+        exit 0
+    fi
     echo "!! Couldn't find Background.qml at: $BG_FILE"
     exit 1
 fi
@@ -34,7 +62,7 @@ mkdir -p "$MODULE_DIR" "$BIN_DIR" "$LIB_DIR"
 # --- clean up the pre-multi-source single-script install, if present ---
 if [ -f "$BIN_DIR/revolver-scan-steam" ]; then
     rm -f "$BIN_DIR/revolver-scan-steam"
-    echo "-> removed old $BIN_DIR/revolver-scan-steam (replaced by revolver-scan)"
+    log "-> removed old $BIN_DIR/revolver-scan-steam (replaced by revolver-scan)"
 fi
 
 rm -rf "$LIB_DIR/revolver_lib"
@@ -43,17 +71,18 @@ cp -r "$SRC_DIR/bin/revolver_lib" "$LIB_DIR/revolver_lib"
 install -m 755 "$SRC_DIR/bin/revolver-scan" "$BIN_DIR/revolver-scan"
 install -m 755 "$SRC_DIR/bin/revolver-configure" "$BIN_DIR/revolver-configure"
 sed -i "s#__LIB_DIR__#$LIB_DIR#g" "$BIN_DIR/revolver-scan" "$BIN_DIR/revolver-configure"
-echo "-> installed $BIN_DIR/revolver-scan and $BIN_DIR/revolver-configure (library: $LIB_DIR/revolver_lib)"
+log "-> installed $BIN_DIR/revolver-scan and $BIN_DIR/revolver-configure (library: $LIB_DIR/revolver_lib)"
 
 sed "s#__SCRIPT_PATH__#$BIN_DIR/revolver-scan#g" \
     "$SRC_DIR/qml/RevolverBarrel.qml" > "$MODULE_DIR/RevolverBarrel.qml"
-echo "-> widget file installed: $MODULE_DIR/RevolverBarrel.qml"
+log "-> widget file installed: $MODULE_DIR/RevolverBarrel.qml"
 
 # --- clean up the older standalone-window approach, if present ---
 if grep -q "qs.modules.revolverBarrel" "$SHELL_FILE" 2>/dev/null; then
     cp "$SHELL_FILE" "$SHELL_FILE.bak"
     sed -i '/import qs\.modules\.revolverBarrel/d; /^\s*RevolverBarrel {}\s*$/d' "$SHELL_FILE"
-    echo "-> removed old standalone RevolverBarrel {} from shell.qml (backup: shell.qml.bak)"
+    log "-> removed old standalone RevolverBarrel {} from shell.qml (backup: shell.qml.bak)"
+    CHANGED=true
 fi
 
 # --- 1. Config.qml: add the revolver schema entry (enable, chamberCount,
@@ -176,17 +205,20 @@ PYEOF
 )"
     case "$RESULT" in
         SKIP)
-            echo "-> Config.qml already has the current revolver schema, skipping"
+            log "-> Config.qml already has the current revolver schema, skipping"
             ;;
         FIELDS_ADDED)
-            echo "-> added new revolver fields (source/steamMode/manual selection) to Config.qml (backup: Config.qml.bak)"
+            log "-> added new revolver fields (source/steamMode/manual selection) to Config.qml (backup: Config.qml.bak)"
+            CHANGED=true
             ;;
         FRESH_INSERT)
-            echo "-> patched Config.qml (backup: Config.qml.bak)"
+            log "-> patched Config.qml (backup: Config.qml.bak)"
+            CHANGED=true
             ;;
         *)
             echo "!! Config.qml patch failed ($RESULT) - restoring backup"
             cp "$CONFIG_QML.bak" "$CONFIG_QML"
+            HAD_ERROR=true
             ;;
     esac
 else
@@ -383,17 +415,20 @@ PYEOF
 )"
     case "$RESULT" in
         SKIP)
-            echo "-> BackgroundConfig.qml already has the current revolver section, skipping"
+            log "-> BackgroundConfig.qml already has the current revolver section, skipping"
             ;;
         SELECTORS_ADDED)
-            echo "-> added Source/Steam-mode selectors to the existing revolver section in BackgroundConfig.qml (backup: BackgroundConfig.qml.bak)"
+            log "-> added Source/Steam-mode selectors to the existing revolver section in BackgroundConfig.qml (backup: BackgroundConfig.qml.bak)"
+            CHANGED=true
             ;;
         FRESH_INSERT)
-            echo "-> patched BackgroundConfig.qml (backup: BackgroundConfig.qml.bak)"
+            log "-> patched BackgroundConfig.qml (backup: BackgroundConfig.qml.bak)"
+            CHANGED=true
             ;;
         *)
             echo "!! BackgroundConfig.qml patch failed ($RESULT) - restoring backup"
             cp "$SETTINGS_QML.bak" "$SETTINGS_QML"
+            HAD_ERROR=true
             ;;
     esac
 else
@@ -405,49 +440,61 @@ fi
 PATCH_RESULT="$(python3 "$SRC_DIR/bin/_patch_background.py" "$BG_FILE")"
 case "$PATCH_RESULT" in
     SKIP)
-        echo "-> Background.qml already has the position-fixed loader, skipping"
+        log "-> Background.qml already has the position-fixed loader, skipping"
         ;;
     MARGIN_UPDATED)
-        echo "-> updated the corner margin on the already-installed loader (backup: Background.qml.bak)"
+        log "-> updated the corner margin on the already-installed loader (backup: Background.qml.bak)"
+        CHANGED=true
         ;;
     PROPERTIES_ADDED)
-        echo "-> added source/steamMode bindings to the already-installed loader (backup: Background.qml.bak)"
+        log "-> added source/steamMode bindings to the already-installed loader (backup: Background.qml.bak)"
+        CHANGED=true
         ;;
     MARGIN_AND_PROPERTIES_UPDATED)
-        echo "-> updated the corner margin and added source/steamMode bindings on the already-installed loader (backup: Background.qml.bak)"
+        log "-> updated the corner margin and added source/steamMode bindings on the already-installed loader (backup: Background.qml.bak)"
+        CHANGED=true
         ;;
     PROPERTIES_ANCHOR_NOT_FOUND)
         echo "!! Background.qml's revolver block looks hand-edited enough that I couldn't safely add"
         echo "   the new source/steamMode bindings - add them yourself (see README) or the Source/Mode"
         echo "   selectors in Settings won't do anything until you do."
+        HAD_ERROR=true
         ;;
     MARGIN_UPDATED_PROPERTIES_ANCHOR_NOT_FOUND)
         echo "-> updated the corner margin (backup: Background.qml.bak), but couldn't safely add the new"
         echo "   source/steamMode bindings - the revolver block looks hand-edited. Add them yourself (see"
         echo "   README) or the Source/Mode selectors in Settings won't do anything until you do."
+        CHANGED=true
+        HAD_ERROR=true
         ;;
     UPGRADED_ANCHORS)
-        echo "-> fixed Background.qml's widget position (was anchoring against the Loader, not the screen) (backup: Background.qml.bak)"
+        log "-> fixed Background.qml's widget position (was anchoring against the Loader, not the screen) (backup: Background.qml.bak)"
+        CHANGED=true
         ;;
     UPGRADED_UNCONDITIONAL)
-        echo "-> upgraded Background.qml's original unconditional widget straight to the position-fixed, config-gated loader (backup: Background.qml.bak)"
+        log "-> upgraded Background.qml's original unconditional widget straight to the position-fixed, config-gated loader (backup: Background.qml.bak)"
+        CHANGED=true
         ;;
     FRESH_INSERT)
-        echo "-> inserted the position-fixed, config-gated widget into Background.qml"
+        log "-> inserted the position-fixed, config-gated widget into Background.qml"
+        CHANGED=true
         ;;
     ANCHOR_NOT_FOUND)
         echo "!! Couldn't find the expected anchor line in Background.qml - add the widget manually (see README)."
+        HAD_ERROR=true
         ;;
     *)
         echo "!! Unexpected result patching Background.qml: $PATCH_RESULT"
+        HAD_ERROR=true
         ;;
 esac
 
-echo
-echo "Sanity-checking your configured source's scan (top 5 by weight):"
-"$BIN_DIR/revolver-scan" --top 5 || echo "   (scan check failed - not fatal, install itself is done; see stderr above)"
+if [ "$QUIET" = false ]; then
+    echo
+    echo "Sanity-checking your configured source's scan (top 5 by weight):"
+    "$BIN_DIR/revolver-scan" --top 5 || echo "   (scan check failed - not fatal, install itself is done; see stderr above)"
 
-cat <<'EOF'
+    cat <<'EOF'
 
 Reload quickshell to see it (or restart it in the foreground to catch any
 compile error live):
@@ -466,3 +513,18 @@ library, run:
 
     revolver-configure
 EOF
+else
+    # Only make noise if there was actually something to say - this runs
+    # on every login via systemd (see hyprland-revolver-setup.service),
+    # so staying silent when nothing changed is what keeps that from
+    # becoming an annoying recurring notification.
+    if command -v notify-send >/dev/null 2>&1; then
+        if [ "$HAD_ERROR" = true ]; then
+            notify-send -a "Revolver Barrel" "Setup ran into a problem" \
+                "Check: journalctl --user -u hyprland-revolver-setup" || true
+        elif [ "$CHANGED" = true ]; then
+            notify-send -a "Revolver Barrel" "Revolver Barrel is set up" \
+                "Reload quickshell to see it: pkill -f 'qs -c ii' && qs -c ii" || true
+        fi
+    fi
+fi

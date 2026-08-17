@@ -92,6 +92,38 @@ Item {
         stdout: StdioCollector {
             onStreamFinished: root._onScanFinished(this.text)
         }
+        // A scan that fails to even run (missing python3, a bad
+        // __SCRIPT_PATH__, a permissions problem, a crash before it
+        // could print anything) might never reach onStreamFinished at
+        // all - without this, `loading` would stay stuck true forever,
+        // and since every rescan (chamber count, source, and mode
+        // changes all included) goes through the same `if (root.loading)
+        // return` guard in _rescan(), one bad scan would silently brick
+        // every one of those controls at once, not just the scan itself.
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode !== 0 && root.loading) {
+                root.loading = false
+                root.statusText = "scan failed (exit " + exitCode + ") - try 'revolver-scan' in a terminal"
+            }
+        }
+    }
+
+    // Belt-and-braces on top of onExited above, in case a scan hangs
+    // outright rather than exiting - e.g. something on the PATH it
+    // shells out to (xdg-open, a launcher binary) blocking instead of
+    // returning. Without this there'd be no way to recover short of
+    // reloading quickshell.
+    Timer {
+        id: scanWatchdog
+        interval: 15000
+        repeat: false
+        onTriggered: {
+            if (root.loading) {
+                scanProc.running = false
+                root.loading = false
+                root.statusText = "scan timed out - try 'revolver-scan' in a terminal"
+            }
+        }
     }
 
     Process {
@@ -103,11 +135,13 @@ Item {
         if (root.loading) return
         root.loading = true
         root.statusText = "chambering..."
+        scanWatchdog.restart()
         scanProc.running = true
     }
 
     function _onScanFinished(text) {
         root.loading = false
+        scanWatchdog.stop()
         var pool = []
         try {
             pool = JSON.parse(text)
@@ -115,7 +149,7 @@ Item {
             pool = []
         }
         if (pool.length === 0) {
-            root.statusText = "no steam library found"
+            root.statusText = "nothing found for this source - check it's installed"
             return
         }
         root.lastPool = pool

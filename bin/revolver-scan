@@ -58,6 +58,7 @@ def main():
         return
 
     print(json.dumps(pool))
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ command -v makepkg >/dev/null 2>&1 || {
 command -v git >/dev/null 2>&1 || { echo "!! git not found"; exit 1; }
 [ -f "$REPO_ROOT/PKGBUILD" ] || { echo "!! No PKGBUILD next to this script"; exit 1; }
 [ -f "$REPO_ROOT/hyprland-revolver-git.install" ] || { echo "!! No hyprland-revolver-git.install next to this script"; exit 1; }
+[ -f "$REPO_ROOT/hyprland-revolver-setup.service" ] || { echo "!! No hyprland-revolver-setup.service next to this script"; exit 1; }
 
 echo "-> cloning $AUR_SSH"
 echo "   (if this is the first-ever publish, an empty repo is expected here -"
@@ -33,13 +34,14 @@ cd "$WORKDIR/$PKGNAME"
 
 cp "$REPO_ROOT/PKGBUILD" .
 cp "$REPO_ROOT/hyprland-revolver-git.install" .
+cp "$REPO_ROOT/hyprland-revolver-setup.service" .
 
 echo "-> generating .SRCINFO"
 makepkg --printsrcinfo > .SRCINFO
 
-git add PKGBUILD hyprland-revolver-git.install .SRCINFO
+git add PKGBUILD hyprland-revolver-git.install hyprland-revolver-setup.service .SRCINFO
 if git diff --cached --quiet; then
-    echo "-> PKGBUILD/.install/.SRCINFO unchanged since the last publish, nothing to push"
+    echo "-> PKGBUILD/.install/.service/.SRCINFO unchanged since the last publish, nothing to push"
     exit 0
 fi
 
